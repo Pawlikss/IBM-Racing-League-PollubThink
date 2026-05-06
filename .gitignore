@@ -1,0 +1,19 @@
+# Cache Pythona
+__pycache__/
+*.py[cod]
+
+# Pliki tworzone w locie podczas uruchomienia bota
+*.csv
+last_lap.json
+params.json
+optuna_*.db
+*.db-journal
+
+# IDE
+.idea/
+.vscode/
+.venv/
+# TORCS runtime artefakty (silnik gry trzymamy w repo, ale pomijamy generowane pliki)
+torcs/results/
+torcs/config/screen.xml
+torcs/*.log

@@ -1,0 +1,11 @@
+# Python 3.10+ (testowane na 3.14.3 na maszynie devowej)
+# Wersje pinowane ">=" zamiast "==" zeby na nowej maszynie nie psulo sie przy
+# nieznacznie nowszych wydaniach. Jezeli cos sie sypnie -> zlokowac dokladnie te:
+#   optuna==4.8.0  pyautogui==0.9.54  numpy==2.4.3
+
+optuna>=3.0,<5.0
+pyautogui>=0.9,<1.0
+numpy>=1.20,<3.0
+
+# Opcjonalnie - podglad badania w przegladarce zamiast inspect_study.py
+# optuna-dashboard>=0.14
