@@ -60,22 +60,22 @@ def analyze():
     avg_corner_speed = sum(corner_speeds) / len(corner_speeds) if corner_speeds else 0
     avg_straight_speed = sum(straight_speeds) / len(straight_speeds) if straight_speeds else 0
     
-    # Filtrowanie prawidłowych okrążeń - odrzucamy resety/bugi < 80 sekund
+    # Filtering valid laps - discarding resets/bugs < 80 seconds
     valid_laps = [t for t in lap_times if t > 80.0]
     bugged_laps = [t for t in lap_times if t <= 80.0]
 
-    print('--- RAPORT INZYNIERA WYSCIGOWEGO ---')
-    print(f'Przeanalizowane probki: {total_rows}')
-    print(f'Zarejestrowane okrazenia (Prawidlowe >80s): {len(valid_laps)} {[round(t, 2) for t in valid_laps]}')
+    print('--- RACE ENGINEER REPORT ---')
+    print(f'Analyzed samples: {total_rows}')
+    print(f'Recorded laps (Valid >80s): {len(valid_laps)} {[round(t, 2) for t in valid_laps]}')
     if valid_laps:
-        print(f'Najlepszy czas: {min(valid_laps):.2f}s | Sredni czas: {sum(valid_laps)/len(valid_laps):.2f}s')
-    print(f'Zarejestrowane bledy/wypadki (<80s): {len(bugged_laps)}')
-    print(f'Predkosc Maksymalna: {max_speed:.2f} km/h')
-    print(f'Srednia Predkosc: {avg_speed:.2f} km/h')
-    print(f'Srednia Predkosc (Zakrety): {avg_corner_speed:.2f} km/h')
-    print(f'Srednia Predkosc (Proste): {avg_straight_speed:.2f} km/h')
-    print(f'Czas z gazem w podlodze (>90%): {(full_throttle_count/total_rows)*100:.1f}%')
-    print(f'Czas na hamulcu (>10%): {(brake_count/total_rows)*100:.1f}%')
-    print(f'Czas poza torem (TrackPos > 1 lub < -1): {(off_track_count/total_rows)*100:.1f}%')
+        print(f'Best time: {min(valid_laps):.2f}s | Average time: {sum(valid_laps)/len(valid_laps):.2f}s')
+    print(f'Recorded errors/crashes (<80s): {len(bugged_laps)}')
+    print(f'Maximum Speed: {max_speed:.2f} km/h')
+    print(f'Average Speed: {avg_speed:.2f} km/h')
+    print(f'Average Speed (Corners): {avg_corner_speed:.2f} km/h')
+    print(f'Average Speed (Straights): {avg_straight_speed:.2f} km/h')
+    print(f'Time at full throttle (>90%): {(full_throttle_count/total_rows)*100:.1f}%')
+    print(f'Time on brakes (>10%): {(brake_count/total_rows)*100:.1f}%')
+    print(f'Time off track (TrackPos > 1 or < -1): {(off_track_count/total_rows)*100:.1f}%')
 
 analyze()

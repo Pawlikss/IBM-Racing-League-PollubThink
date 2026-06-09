@@ -6,7 +6,7 @@ from logger import LogData, TelemetryLogger
 
 STATE = {"prev_steer": 0.0, "prev_slip": 0.0}
 
-# ================= PARAMETRY KONFIGURACYJNE =================
+# ================= CONFIGURATION PARAMETERS =================
 PARAMS = {
     "TARGET_STRAIGHT_SPEED": 290.0,
     "SAFE_SHARP_CORNER_SPEED": 80.0,
@@ -15,29 +15,29 @@ PARAMS = {
     "CENTERING_GAIN": 0.2,
     "BRAKE_THRESHOLD": 0.3,
     "APEX_SHIFT_GAIN": 0.46,
-    "APEX_SCALE": 0.4,               # Zwiekszono dla maksymalnej płynności (eliminuje szarpanie!)
-                                     # 0.05 ~= bang-bang dla typowych |bias|>0.15 (preserves vision_best baseline).
-                                     # Optuna ANTISLALOM eksploruje wieksze wartosci dla anti-slalom dampening.
-    # Faza 6a - wyciagniete z hardkodow apply_brakes (do tunowania przez Optune)
-    "BRAKE_DISTANCE_LIN": 0.35,      # mnoznik liniowy speedX dla safe_distance
-    "BRAKE_DISTANCE_QUAD": 1200.0,   # dzielnik kwadratowy speedX^2 dla safe_distance
-    "TRAIL_BRAKE_DIVISOR": 40.0,     # exit_vision/X -> forgiveness przy trail brakingu
-    "BRAKE_PRESS_DIVISOR": 50.0,     # (safe-front)/(X*forgiveness) -> sila hamowania
-    # Faza 6b-vision - wyciagniete z hardkodow calculate_throttle (do tunowania)
+    "APEX_SCALE": 0.4,               # Increased for maximum smoothness (eliminates jitter!)
+                                     # 0.05 ~= bang-bang for typical |bias|>0.15 (preserves vision_best baseline).
+                                     # Optuna ANTISLALOM explores larger values for anti-slalom dampening.
+    # Phase 6a - extracted from apply_brakes hardcoded values (for Optuna tuning)
+    "BRAKE_DISTANCE_LIN": 0.35,      # linear multiplier of speedX for safe_distance
+    "BRAKE_DISTANCE_QUAD": 1200.0,   # quadratic divisor of speedX^2 for safe_distance
+    "TRAIL_BRAKE_DIVISOR": 40.0,     # exit_vision/X -> forgiveness during trail braking
+    "BRAKE_PRESS_DIVISOR": 50.0,     # (safe-front)/(X*forgiveness) -> braking force
+    # Phase 6b-vision - extracted from calculate_throttle hardcodes (for tuning)
     "VISION_LONG_STRAIGHT": 130.0,   # vision > X -> TARGET_STRAIGHT_SPEED
     "VISION_FAST_CORNER": 90.0,      # vision > X -> SPEED_FAST_CORNER
-    "SPEED_FAST_CORNER": 240.0,      # km/h dla szerokiego luku
+    "SPEED_FAST_CORNER": 240.0,      # km/h for wide curve
     "VISION_MED_CORNER": 60.0,       # vision > X -> SPEED_MED_CORNER
-    "SPEED_MED_CORNER": 190.0,       # km/h dla standardowego zakretu
-    # ABS (System zapobiegający blokowaniu kół)
-    "ABS_SLIP_THRESHOLD": 3.0,       # Maksymalna różnica prędkości (m/s) przed interwencją ABS
-    "ABS_MODULATION": 0.4,           # O ile odpuścić hamulec gdy koła się zablokują
-    "ABS_D_GAIN": 0.1,               # D-Gain dla ABS (modulacja w oparciu o szybkość narastania poślizgu)
-    "STEER_D_GAIN": 0.5,             # D-Gain dla kierownicy (Zmniejszono z 2.0 by zapobiec szarpaniom!)
-    "TCS_SLIP_THRESHOLD": 5.0        # Próg uślizgu kół dla Kontroli Trakcji (TCS)
+    "SPEED_MED_CORNER": 190.0,       # km/h for standard corner
+    # ABS (Anti-lock Braking System)
+    "ABS_SLIP_THRESHOLD": 3.0,       # Maximum speed difference (m/s) before ABS intervention
+    "ABS_MODULATION": 0.4,           # How much to release the brake when wheels lock
+    "ABS_D_GAIN": 0.1,               # D-Gain for ABS (modulation based on slip increase rate)
+    "STEER_D_GAIN": 0.5,             # D-Gain for steering (Reduced from 2.0 to prevent jitter!)
+    "TCS_SLIP_THRESHOLD": 5.0        # Wheel slip threshold for Traction Control System (TCS)
 }
 
-# Nadpisywanie parametrów przez Optuna (jeśli plik istnieje)
+# Overwriting parameters by Optuna (if file exists)
 if os.path.exists("params.json"):
     with open("params.json", "r") as f:
         try:
@@ -46,9 +46,9 @@ if os.path.exists("params.json"):
         except:
             pass
 
-# ================= FUNKCJE POMOCNICZE =================
+# ================= HELPER FUNCTIONS =================
 def get_min_sensor_data(S):
-    """Zwraca najmniejszą odległość do krawędzi z lewej i prawej strony"""
+    """Returns the minimum distance to the edge from left and right side"""
     left_sensors = S['track'][:9]
     right_sensors = S['track'][10:]
 
@@ -57,47 +57,52 @@ def get_min_sensor_data(S):
     return min(min_left, min_right)
 
 def is_corner(S, min_reading):
-    """Wykrywa, czy samochód znajduje się w zakręcie"""
-    # Szerszy kąt widzenia minimalizuje problem fałszywych zakrętów na prostych i pagórkach
-    # Usunięto błąd (min_reading < 4.0), który wywoływał fałszywe zakręty przy krawędzi prostej!
+    """Detects if the car is located in a corner"""
+    # Wider viewing angle minimizes false corners on straights and hills
+    # Removed bug (min_reading < 4.0) causing false corners near straight edges!
     open_path = max(S['track'][2:17])
     if open_path < 140.0:
         return True
     return False
 
-# ================= LOGIKA STEROWANIA =================
+# ================= CONTROL LOGIC =================
 def calculate_steering(S, is_in_corner):
     dist = S.get('distFromStart', 0.0)
-    # Strefa ślepego spadku w szykanie (Korkociąg). Optyczne radary widzą tutaj "niebo".
-    # Wymuszamy maksymalną gotowość na zakręt ZANIM uskok się zacznie, żeby auto nie rzucało kierownicą!
+    # Blind drop zone in the chicane (Corkscrew). Optical radars see "sky" here.
+    # Forcing maximum corner readiness BEFORE the drop starts, so the car doesn't jerk the steering wheel!
     is_chicane = 2370.0 < dist < 2500.0
     
-    # Płynnie wyliczamy, w jak głębokim zakręcie jesteśmy (0.0 = długa prosta, 1.0 = środek zakrętu)
+    # Smoothly calculating how deep in the corner we are (0.0 = long straight, 1.0 = mid-corner)
     open_path = max(S['track'][2:17])
+    exit_vision = max(S['track'][1:18])
     corner_intensity = max(0.0, min(1.0, (150.0 - open_path) / 50.0))
     if is_chicane:
         corner_intensity = 1.0 
     
-    current_centering = PARAMS["CENTERING_GAIN"] * (1.0 - 0.5 * corner_intensity)
+    # True Out-In-Out: on corner exit, we allow drifting to the outside
+    if exit_vision > 80.0 and corner_intensity > 0.0 and not is_chicane:
+        current_centering = 0.02 # Minimal centering. Centrifugal force will push the car to the curb, but the bot won't hit the grass!
+    else:
+        current_centering = PARAMS["CENTERING_GAIN"] * (1.0 - 0.5 * corner_intensity)
 
     steer = (S['angle'] * PARAMS["STEER_GAIN"] / math.pi) - (S['trackPos'] * current_centering)
 
-    # Kontroler PD dla kierownicy. Mocno osłabiamy na prostych, by zapobiec wężykowaniu!
+    # PD controller for steering. Heavily weakened on straights to prevent weaving!
     d_steer = steer - STATE["prev_steer"]
     STATE["prev_steer"] = steer
     
     current_d_gain = PARAMS.get("STEER_D_GAIN", 0.5) * (1.0 - 0.8 * corner_intensity)
     steer += d_steer * current_d_gain
 
-    # Ciągły tłumik prędkościowy na najszybszych prostych
+    # Continuous speed dampener on the fastest straights
     if S['speedX'] > 90.0:
         speed_factor = S['speedX'] / 90.0
         if S['speedX'] > 150.0:
             speed_factor = (S['speedX'] / 90.0) ** 1.5
         steer = steer / speed_factor
 
-    # Cięcie zakrętu uaktywnia się TYLKO gdy auto fizycznie widzi zakręt (corner_intensity > 0.0). 
-    # Na prostej mnożnik z automatu wynosi zero, co w 100% zlikwiduje jakikolwiek uślizg i lewo/prawo!
+    # Corner cutting activates ONLY when the car physically sees a corner (corner_intensity > 0.0).
+    # On a straight, the multiplier is zero, which 100% eliminates any slip and left/right movement!
     if corner_intensity > 0.0:
         left_avg = sum(S['track'][:9]) / 9.0
         right_avg = sum(S['track'][10:]) / 9.0
@@ -105,13 +110,17 @@ def calculate_steering(S, is_in_corner):
         
         apex_gain = PARAMS.get("APEX_SHIFT_GAIN", 0.46) * corner_intensity
         if is_chicane:
-            apex_gain *= 1.6 # Wymuszamy mocniejsze łamanie auta na samej szykanie
+            apex_gain *= 1.6 # Forcing a sharper turn in the chicane itself
+            
+        # Easing off "kiss the apex" on exit, which naturally throws the car to the outside!
+        if exit_vision > 80.0 and not is_chicane:
+            apex_gain *= 0.4 # Smoothed release, prevents sudden "letting go" of the steering wheel
             
         inside_dist = min(S['track'][:9]) if bias > 0 else min(S['track'][10:])
-        # Poduszka, żeby nie wjeżdżał w żwir, ale bardzo ciasno dokręcał do trawy (od 2.0m do 0.8m)
-        edge_factor = max(0.0, min(1.0, (inside_dist - 0.8) / 1.2))
+        # Slightly larger cushion (0.4m) so the inner wheel doesn't slip on the sand
+        edge_factor = max(0.0, min(1.0, (inside_dist - 0.4) / 1.0))
         if is_chicane:
-            edge_factor = 1.0 # W Korkociągu ignorujemy poduszkę
+            edge_factor = 1.0 # In the Corkscrew, we ignore the cushion
             
         apex_scale = max(2.0, PARAMS.get("APEX_SCALE", 4.0))
         steer -= apex_gain * edge_factor * math.tanh(bias / apex_scale)
@@ -119,53 +128,53 @@ def calculate_steering(S, is_in_corner):
     return max(-1.0, min(1.0, steer))
 
 def calculate_throttle(S, R):
-    # Odcięcie gazu jeśli bot wciąż ostro hamuje
+    # Cut throttle if bot is still braking hard
     if R.get('brake', 0.0) > 0.1:
         return 0.0
 
-    # 'corner_vision' patrzy przed siebie, a 'exit_vision' szeroko na boki, szukając wyjścia z łuku.
+    # 'corner_vision' looks ahead, and 'exit_vision' looks wide to the sides, searching for the curve exit.
     corner_vision = max(S['track'][4:15])
     exit_vision = max(S['track'][1:18])
     
-    # Sztuczne "otwarcie" wizji: jeśli bokiem widzimy prostą, ignorujemy ścianę z przodu!
-    # Dzięki temu bot zacznie przyspieszać (od razu doda gazu) już w środku zakrętu.
+    # Artificial vision "opening": if we see a straight to the side, we ignore the front wall!
+    # Thanks to this, the bot will start accelerating (applying throttle immediately) already in mid-corner.
     vision = max(corner_vision, exit_vision * 0.95)
     
-    # Łatanie edge-case'a z bloga (hesitation na wyjściu z zakrętu).
+    # Fixing edge-case (hesitation on corner exit).
     if max(S['track'][8:11]) >= 150.0 or exit_vision > 75.0:
         vision = 200.0
 
     dist = S.get('distFromStart', 0.0)
     
-    # Jeszcze późniejsze dohamowanie. Tniemy do 2180m na pełnym gazie!
+    # Even later braking. We push full throttle up to 2180m!
     if 1950.0 < dist < 2280.0:
         vision = 200.0
 
     if vision > PARAMS["VISION_LONG_STRAIGHT"]:
-        # Długa prosta, jedziemy na maksa (wymuszamy wysoki limit ignorując ewentualne zachowawcze wartości Optuny)
+        # Long straight, max speed (forcing a high limit ignoring any conservative Optuna values)
         target_speed = max(295.0, PARAMS.get("TARGET_STRAIGHT_SPEED", 290.0))
     elif vision > PARAMS["VISION_FAST_CORNER"]:
-        # Szeroki, łagodny zakręt, który można pokonać bardzo szybko
+        # Wide, gentle corner that can be taken very fast
         target_speed = PARAMS["SPEED_FAST_CORNER"]
     elif vision > PARAMS["VISION_MED_CORNER"]:
-        # Standardowy, dość szybki zakręt
+        # Standard, fairly fast corner
         target_speed = PARAMS["SPEED_MED_CORNER"]
     elif vision > 35.0:
-        # Ograniczenie prędkości dla normalnych zakrętów, żeby nie zrywać przyczepności na 2. biegu
+        # Speed limit for normal corners to prevent losing traction in 2nd gear
         target_speed = min(95.0, PARAMS.get("MIN_NORMAL_CORNER_SPEED", 90.0))
     else:
-        # Ograniczenie prędkości dla ostrych zakrętów
+        # Speed limit for sharp corners
         target_speed = min(85.0, PARAMS.get("SAFE_SHARP_CORNER_SPEED", 80.0))
 
-    # Zacieśniona blokada kąta! Kiedy auto walczy w zakręcie, mocniej zdejmujemy target speed
-    # by zapobiec ucieczce zjawiskiem podsterowności na zewnętrzny piasek.
+    # Tightened angle lock! When the car struggles in a corner, we reduce target speed more
+    # to prevent understeer pushing it to the outside sand.
     if abs(S['angle']) > 0.5 and target_speed > PARAMS["MIN_NORMAL_CORNER_SPEED"]:
         target_speed = min(90.0, PARAMS.get("MIN_NORMAL_CORNER_SPEED", 90.0))
 
     is_chicane_area = 2400.0 < dist < 2500.0
     
     if is_chicane_area:
-        target_speed = min(target_speed, 70.0) # Niższy cel, żeby nie dobijał do 90 km/h przed zjazdem
+        target_speed = min(target_speed, 70.0) # Lower target so it doesn't hit 90 km/h before the drop
 
     speed_diff = target_speed - S['speedX']
     
@@ -179,20 +188,21 @@ def calculate_throttle(S, R):
 
     slip = ((S['wheelSpinVel'][2] + S['wheelSpinVel'][3]) - (S['wheelSpinVel'][0] + S['wheelSpinVel'][1]))
     if slip > PARAMS.get("TCS_SLIP_THRESHOLD", 5.0) and S['speedX'] < 200.0:
-        # Jeśli koła zerwą trakcję, powolne odejmowanie -0.3 odciążało tył wywołując nagły uślizg.
-        # Ucinamy gaz twardo do bezpiecznych 10%, natychmiastowo stabilizując bolid.
+        # If wheels lose traction, slowly subtracting -0.3 unloaded the rear causing sudden slip.
+        # We cut throttle hard to a safe 10%, immediately stabilizing the car.
         accel = min(accel, 0.1)
 
     steer_mag = abs(R.get('steer', 0.0))
-    # Prawdziwe, matematyczne "Traction Circle" (Koło Przyczepności).
-    # Zamiast sztywnego progu skokowego, ucinamy gaz całkowicie PŁYNNIE na całej szerokości zakrętu.
-    # Eliminuje to gwałtowne zrzuty mocy, zapobiegając niebezpiecznym transferom masy i bączkom!
-    max_allowed_accel = max(0.0, 1.0 - (steer_mag ** 1.2))
+    # True, mathematical "Traction Circle".
+    # Aggressive full throttle right at the corner apex (exit_vision > 55m)!
+    # Exponent 3.5 = immediate 100% power upon steering return to center.
+    exponent = 3.5 if exit_vision > 55.0 else 1.8
+    max_allowed_accel = max(0.0, 1.0 - (steer_mag ** exponent))
     accel = min(accel, max_allowed_accel)
 
     if is_chicane_area:
-        # KLUCZOWE: Całkowity zakaz dodawania gazu na wejściu i ślepym zjeździe! 
-        # Wcześniej po dohamowaniu bot od razu przyspieszał w locie do 90 km/h, co wywoływało natychmiastowy poślizg.
+        # CRITICAL: Absolute ban on throttle at the entry and blind drop!
+        # Previously, after braking, the bot immediately accelerated in the air to 90 km/h, causing instant slip.
         if S['speedX'] > 70.0:
             accel = 0.0
         elif abs(S['angle']) > 0.1:
@@ -207,66 +217,66 @@ def apply_brakes(S, is_in_corner):
     brake = 0.0
     dist = S.get('distFromStart', 0.0)
 
-    # Łagodniejsze hamowanie z powodu błędu kąta, aplikowane tylko na dużej prędkości.
-    # Zwiększony próg kąta zapobiega muskaniu hamulca przy drobnych korektach na prostych (co zabijało V-MAX)!
+    # Gentler braking due to angle error, applied only at high speeds.
+    # Increased angle threshold prevents brake tapping during minor straight corrections (which killed V-MAX)!
     if abs(S['angle']) > PARAMS.get("BRAKE_THRESHOLD", 0.3) + 0.15 and S['speedX'] > 200:
         brake += 0.05
 
-    # Czujniki z przodu oceniają dystans do bandy na wprost
+    # Front sensors assess distance to the wall ahead
     front_path = max(S['track'][7:12])
-    # Szerokie czujniki oceniają, czy jest "ucieczka" z boku (wyjście z zakrętu)
+    # Wide sensors assess if there's an "escape" to the side (corner exit)
     exit_vision = max(S['track'][2:17])
     
-    # Nieliniowy model dystansu hamowania. Ratuje bota przy najwyższych prędkościach,
-    # wymuszając hamowanie z dużo większego wyprzedzenia ze wzoru kwadratowego:
+    # Non-linear braking distance model. Saves the bot at highest speeds,
+    # forcing much earlier braking using a quadratic formula:
     safe_distance = (S['speedX'] * PARAMS["BRAKE_DISTANCE_LIN"]) + (S['speedX'] ** 2) / PARAMS["BRAKE_DISTANCE_QUAD"]
-    # Płynny ekstra mnożnik dystansu dla ekstremalnych prędkości.
-    # Zredukowany z 0.4 do 0.2, żeby bot nie zwalniał za wcześnie po osiągnięciu upragnionych 260-270 km/h!
+    # Smooth extra distance multiplier for extreme speeds.
+    # Earlier braking on straights! Increased coefficient to 0.25 (car won't overshoot).
     if S['speedX'] > 200.0:
-        speed_factor = (S['speedX'] - 200.0) / 100.0 # od 0.0 przy 200km/h do 1.0 przy 300km/h
-        safe_distance *= 1.0 + (0.2 * speed_factor)
-    # Ograniczenie do 250m, daje jeszcze większy margines na wcześniejsze hamowanie przy ekstremalnych V-MAX
+        speed_factor = (S['speedX'] - 200.0) / 100.0 # from 0.0 at 200km/h to 1.0 at 300km/h
+        safe_distance *= 1.0 + (0.25 * speed_factor)
+    # Limit to 250m, provides an even larger margin for earlier braking at extreme V-MAX
     safe_distance = min(250.0, safe_distance)
     if front_path < safe_distance:
-        # Trail Braking: Jeśli z boku jest otwarta droga (exit z łuku), drastycznie redukujemy siłę hamowania!
+        # Trail Braking: If the side path is open (corner exit), drastically reduce braking force!
         forgiveness = max(1.0, exit_vision / PARAMS["TRAIL_BRAKE_DIVISOR"])
-        # Jeszcze silniejsza redukcja hamowania na wyjściach, gdzie mamy wolną przestrzeń
+        # Fixed bug of duplicating multipliers (previously braking force dropped to ZERO!)
         if exit_vision > 80.0:
-            forgiveness *= 2.5
+            forgiveness *= 2.0
         elif exit_vision > 50.0:
-            forgiveness *= 1.5
+            forgiveness *= 1.4
         brake += min(1.0, (safe_distance - front_path) / (PARAMS["BRAKE_PRESS_DIVISOR"] * forgiveness))
 
-    # Panika przed zderzeniem: przywrócono próg 75 km/h dla mocnego hamowania
+    # Collision panic: restored 75 km/h threshold for hard braking
     if front_path < 25 and exit_vision < 45 and S['speedX'] > 75:
         brake += 0.8
 
-    # Track-specific: Ograniczamy paniczne hamowanie, ale TYLKO w epicentrum ślepego uskoku (2200-2350).
-    # Wcześniej (2100-2200) bot MUSI mieć 100% siły hamulców, żeby wejść w zakręt odpowiednio wolno!
+    # Track-specific: Limit panic braking, but ONLY in the epicenter of the blind drop (2200-2350).
+    # Earlier (2100-2200) bot MUST have 100% braking force to enter the corner slow enough!
     is_chicane_blind_drop = 2200.0 < dist < 2350.0
     if is_chicane_blind_drop:
         brake = min(brake, 0.4)
 
     # --- SYSTEM ABS (Anti-Lock Braking System) ---
-    # Zapobiega blokowaniu przednich kół (lock-up), co odzyskuje sterowność i redukuje wężykowanie.
-    # Wyłączamy ABS w strefie krytycznej (ściana < 30m) - lepiej zablokować koła niż wylecieć poza tor!
+    # Prevents front wheel lock-up, regaining steerability and reducing weaving.
+    # Disable ABS in critical zone (wall < 30m) - better to lock wheels than fly off the track!
     if brake > 0.1 and S['speedX'] > 30.0 and front_path > 30.0:
         speed_ms = S['speedX'] / 3.6
-        # Promień koła w F1 car to około 0.33m. spinVel jest w rad/s
+        # F1 car wheel radius is roughly 0.33m. spinVel is in rad/s
         wheel_speed_ms = ((S['wheelSpinVel'][0] + S['wheelSpinVel'][1]) / 2.0) * 0.33 
         
-        # ABS PID controller (wykorzystujemy PD: próg poślizgu + tempo jego narastania z bloga)
+        # ABS PID controller (using PD: slip threshold + slip rate)
         slip = speed_ms - wheel_speed_ms
         d_slip = slip - STATE.get("prev_slip", 0.0)
         STATE["prev_slip"] = slip
 
         if slip > PARAMS.get("ABS_SLIP_THRESHOLD", 3.0):
-            # Limitujemy wpływ członu D i gwarantujemy, że hamulec nigdy nie spadnie poniżej 30% siły!
+            # Limit D-term impact and guarantee brake never drops below 30% force!
             d_slip_clamped = max(-5.0, min(5.0, d_slip))
             modulation = PARAMS.get("ABS_MODULATION", 0.4) + (d_slip_clamped * PARAMS.get("ABS_D_GAIN", 0.1))
             brake = max(0.5, brake - modulation)
             
-    # Zabezpieczenie przed niepotrzebnym mikromuskaniem hamulca
+    # Protection against unnecessary micro-tapping of the brake
     if brake < 0.1:
         brake = 0.0
 
@@ -279,31 +289,32 @@ def shift_gears(S, R):
     if current_gear <= 0:
         return 1
         
-    # Histereza - Opóźnione zmiany na wyższy bieg (wyższy moment obrotowy i lepsze przyspieszenie)
-    if current_gear == 1 and speed > 114: return 2
-    if current_gear == 2 and speed > 153: return 3
-    if current_gear == 3 and speed > 193: return 4
-    if current_gear == 4 and speed > 237: return 5
-    if current_gear == 5 and speed > 248: return 6
+    # Improved F1 gear ratios. Previously the car "bounced" off the rev limiter in 1st gear losing drive,
+    # and shifted to 6th gear too early lacking power on straights!
+    if current_gear == 1 and speed > 105: return 2
+    if current_gear == 2 and speed > 145: return 3
+    if current_gear == 3 and speed > 190: return 4
+    if current_gear == 4 and speed > 230: return 5
+    if current_gear == 5 and speed > 270: return 6
     
-    # Agresywne hamowanie silnikiem (wymuszone zrzutki przy ostrym hamowaniu) zgodnie z blogiem
+    # Aggressive engine braking (forced downshifts during heavy braking).
     if R.get('brake', 0.0) > 0.5:
-        if current_gear == 6 and speed < 249: return 5
-        if current_gear == 5 and speed < 222: return 4
-        if current_gear == 4 and speed < 178: return 3
-        if current_gear == 3 and speed < 138: return 2
-        if current_gear == 2 and speed < 97:  return 1
+        if current_gear == 6 and speed < 260: return 5
+        if current_gear == 5 and speed < 215: return 4
+        if current_gear == 4 and speed < 175: return 3
+        if current_gear == 3 and speed < 130: return 2
+        if current_gear == 2 and speed < 90:  return 1
     else:
-        # ZNACZNIE opóźnione redukcje (zapobiega to zjawisku "Gear Hunting" na szybkich łukach!)
-        if current_gear == 6 and speed < 235: return 5
-        if current_gear == 5 and speed < 205: return 4
-        if current_gear == 4 and speed < 160: return 3
-        if current_gear == 3 and speed < 115: return 2
-        if current_gear == 2 and speed < 75:  return 1
+        # SIGNIFICANTLY delayed downshifts (prevents "Gear Hunting" in fast corners!)
+        if current_gear == 6 and speed < 250: return 5
+        if current_gear == 5 and speed < 210: return 4
+        if current_gear == 4 and speed < 165: return 3
+        if current_gear == 3 and speed < 120: return 2
+        if current_gear == 2 and speed < 80:  return 1
     
     return current_gear
 
-# ================= GŁÓWNA FUNKCJA KIEROWCY =================
+# ================= MAIN DRIVER FUNCTION =================
 def drive_modular(c):
     S, R = c.S.d, c.R.d
     
@@ -327,17 +338,17 @@ if __name__ == "__main__":
 
         S = C.S.d
         
-        # Rejestrowanie telemetrii co 10 kroków silnika gry
+        # Logging telemetry every 10 game engine steps
         if step % 10 == 0:
             in_corner = is_corner(S, get_min_sensor_data(S))
             telemetry.log_step([S.get('curLapTime', 0), S.get('distRaced', 0), S.get('speedX', 0), S.get('trackPos', 0), S.get('angle', 0), C.R.d['steer'], C.R.d['accel'], C.R.d['brake'], in_corner])
 
         if S.get('lastLapTime', 0) > 0:
-            print(f"Meta! Czas okrążenia: {S['lastLapTime']}")
+            print(f"Finish line! Lap time: {S['lastLapTime']}")
             break
             
         if S.get('distRaced', 0) > 20 and S.get('speedX', 0) < 5 and step < C.maxSteps - 100:
-            print("Samochód utknął! Przerywam okrążenie...")
+            print("Car stuck! Aborting lap...")
             S['lastLapTime'] = 9999.9
             break
             
@@ -352,6 +363,6 @@ if __name__ == "__main__":
 
     stats = [PARAMS["TARGET_STRAIGHT_SPEED"], PARAMS["SAFE_SHARP_CORNER_SPEED"], PARAMS["STEER_GAIN"], PARAMS["CENTERING_GAIN"], PARAMS["BRAKE_THRESHOLD"], final_lap_time, dist_raced]
     logger.log_data(stats)
-    print(f"Zapisano log do CSV: Czas {final_lap_time:.2f} (Dystans: {dist_raced:.1f}m)")
+    print(f"Log saved to CSV: Time {final_lap_time:.2f} (Distance: {dist_raced:.1f}m)")
 
     C.shutdown()

@@ -1,77 +1,77 @@
-# TORCS AI Racing Bot (Optuna + Dynamic Lines)
+# TORCS AI Racing Bot (Optuna Tuning + Dynamic Lines)
 
-Ten projekt to zaawansowany, modularny bot wyścigowy do symulatora **TORCS** (The Open Racing Car Simulator). Oparty jest o infrastrukturę `gym_torcs` oraz architekturę klient-serwer (`snakeoil3`).
+This project features an advanced, modular racing bot for the **TORCS** (The Open Racing Car Simulator) engine. It is built on top of the `gym_torcs` infrastructure and client-server architecture (`snakeoil3`).
 
-Zamiast sztywnych reguł (hardcoding), bot korzysta z **Optymalizacji Bayesowskiej** do poszukiwania idealnych parametrów wejść w zakręty oraz dynamicznie generuje **linie wyścigowe** (tzw. Apex Shifting).
+Instead of relying heavily on hardcoded rules, the bot utilizes **Bayesian Optimization (TPE)** to find the ideal corner entry parameters and dynamically generates racing lines through a technique called Apex Shifting.
 
-## 📂 Najważniejsze pliki:
+## 📂 Key Files:
 
-- `my_racer.py` - Główny "mózg" bota. Zawiera logikę czytania sensorów, dohamowywania i przyspieszania.
-- `optimize.py` - Skrypt trenujący. Uruchamia silnik fizyki w trybie przyspieszonym (x128) i używa algorytmu TPE z biblioteki Optuna do szukania idealnych parametrów (np. marginesów dohamowywania).
-- `startup.py` - Menedżer uruchamiania. Zabija wiszące procesy w tle, automatycznie nawiguje po menu gry i włącza bota.
-- `logger.py` - System telemetrii zapisujący wyniki okrążeń do plików CSV.
+- `my_racer.py` - The main "brain" of the bot. Contains logic for reading sensors, trail braking, acceleration, and shifting.
+- `optimize.py` - The training script. Runs the physics engine in accelerated mode (x128) and uses the Optuna library to search for perfect racing parameters.
+- `startup.py` - Game launcher and manager. Cleans up dangling background processes, automatically navigates game menus, and deploys the bot.
+- `logger.py` - Telemetry system that logs lap results to CSV files.
 
-## 🚀 Wymagania
+## 🚀 Requirements
 
-- **Python 3.10+** (testowane na 3.14.3, ale 3.10/3.11/3.12 też powinny działać)
-- **Windows** (TORCS dostarczony tu to wersja `wtorcs.exe`; PyAutoGUI używa Win API do wciskania klawiszy menu)
-- biblioteki Pythona z `requirements.txt`
+- **Python 3.10+** (tested up to 3.14, fully backwards compatible with 3.10/3.11/3.12)
+- **Windows OS** (The bundled TORCS engine is the `wtorcs.exe` binary; PyAutoGUI utilizes WinAPI to simulate keystrokes for menu navigation).
+- Python libraries listed in `requirements.txt`.
 
-### Setup od zera (np. po `git clone` na nowej maszynie)
+### Setup from scratch (e.g., after `git clone` on a new machine)
 
 ```powershell
 git clone <repo-url>
 cd IBM-TORCS-Think2
 
-# (opcjonalnie) virtualenv
+# (Optional) Virtual environment setup
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 ```
 
-TORCS engine (`torcs/wtorcs.exe` + tracki + samochody, ~520 MB) jest commitowany w repo,
-więc po `git clone` wszystko jest gotowe — żadnej zewnętrznej instalacji TORCS-a nie trzeba.
+The TORCS engine (`torcs/wtorcs.exe` + tracks + cars, ~520 MB) is committed to the repo,
+so everything is ready after `git clone` — no external TORCS installation is needed.
 
-> **UWAGA — pierwszy `git clone` zajmie kilka minut** ze względu na 520 MB engine'u TORCS.
+> **NOTE — the first `git clone` will take a few minutes** due to the 520 MB TORCS engine.
 
-## 🎮 Jak uruchomić?
+## 🎮 How to run?
 
-### Opcja 1: Standardowy wyścig (Testowanie)
+### Option 1: Standard race (Testing)
 
-Aby zobaczyć bota w akcji na torze bez modyfikacji parametrów, wystarczy użyć skryptu startowego. Sam włączy grę i wciśnie odpowiednie klawisze w menu:
+To see the bot in action on the track without modifying parameters, simply use the startup script. It will automatically launch the game and press the appropriate keys in the menu:
 
 ```bash
 python startup.py
 ```
 
-### Opcja 2: Proces Optymalizacji (Poszukiwanie czasów)
+### Option 2: Optimization Process (Time hunting)
 
-Aby puścić bota w tryb nauki, odpal moduł sztucznej inteligencji. Bot przejedzie zadaną ilość prób, samodzielnie restartując środowisko po każdym błędzie lub wypadku, dążąc do ucinania ułamków sekund z czasu okrążenia:
+To put the bot into learning mode, launch the AI module. The bot will run a specified number of trials, autonomously restarting the environment after every error or crash, aiming to shave fractions of a second off the lap time:
 
 ```powershell
-# Pelny run (Faza 3 z PLAN.md) - 500 prob, ~8-12h, na noc
+# Full run (Phase 3 from PLAN.md) - 500 trials, ~8-12h, overnight
 $env:SMOKE = "0"
 python optimize.py
 
-# Smoke run (Faza 2) - 20 prob, +/-20% wokol baseline, ~20-30 min
+# Smoke run (Phase 2) - 20 trials, +/-20% around baseline, ~20-30 min
 $env:SMOKE = "1"
 python optimize.py
 ```
 
-Najlepsze uzyskane geny trafią do pliku `params.json`, po czym `my_racer.py` automatycznie je wczyta podczas kolejnych jazd.
+The best obtained genes will be saved to the `params.json` file, after which `my_racer.py` will automatically load them during subsequent runs.
 
-Postęp jest persistowany w `optuna_corkscrew.db` (SQLite) — Ctrl+C jest bezpieczne, ponowne odpalenie tego samego polecenia kontynuuje od ostatniej zakończonej próby (`load_if_exists=True`).
+Progress is persisted in `optuna_corkscrew.db` (SQLite) — Ctrl+C is safe, re-running the same command continues from the last completed trial (`load_if_exists=True`).
 
-### Opcja 3: Podgląd statystyk istniejącego badania
+### Option 3: View statistics of an existing study
 
 ```powershell
-python inspect_study.py smoke_v1     # po Fazie 2
-python inspect_study.py car1ow1_v1   # po Fazie 3
+python inspect_study.py smoke_v1     # after Phase 2
+python inspect_study.py car1ow1_v1   # after Phase 3
 ```
 
-Pokaże ile prób zakończonych, ile DNF, top-5 czasów, best params.
+Shows the number of completed trials, DNF count, top-5 times, and best params.
 
 ---
 
-**Note:** Architektura uwzględnia zabezpieczenia środowiska, które przy crashu wewnętrznego serwera gry (typowe dla bardzo szybkich obliczeń pod systemem Windows) same wymuszą restart instancji TORCS i wznowią trening.
+**Note:** The architecture includes environment safeguards that, in the event of an internal game server crash (typical for very fast computations on Windows), will automatically force a restart of the TORCS instance and resume training.

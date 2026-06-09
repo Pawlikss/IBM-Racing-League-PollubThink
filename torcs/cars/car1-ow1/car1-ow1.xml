@@ -31,6 +31,7 @@
 	
 	<section name="Graphic Objects">
 		<attstr name="env" val="car1-ow1.acc"/>
+		<attstr name="texture" val="car1-ow1.rgb"/>
 		<attstr name="wheel texture" val="tex-wheel.rgb"/>
 		<attstr name="shadow texture" val="shadow.rgb"/>
 		<attstr name="tachometer texture" val="rpm20000.rgb"/>
