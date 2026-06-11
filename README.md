@@ -1,77 +1,82 @@
-# TORCS AI Racing Bot (Optuna Tuning + Dynamic Lines)
+# PollubThink TORCS Racing Bot
 
-This project features an advanced, modular racing bot for the **TORCS** (The Open Racing Car Simulator) engine. It is built on top of the `gym_torcs` infrastructure and client-server architecture (`snakeoil3`).
+This repository contains a Python controller for **TORCS** (The Open Racing Car
+Simulator). The bot reads TORCS sensor data through the `snakeoil3` client,
+drives the car with a rule-based racing controller, and uses Optuna to tune
+selected steering, braking, speed, and vision parameters.
 
-Instead of relying heavily on hardcoded rules, the bot utilizes **Bayesian Optimization (TPE)** to find the ideal corner entry parameters and dynamically generates racing lines through a technique called Apex Shifting.
+The project is designed for Windows. The `torcs/` directory contains the TORCS
+game files used by the project, including `wtorcs.exe`, tracks, cars, and runtime
+configuration. It is included in the repository to make setup repeatable and to
+allow the training scripts to start TORCS automatically without requiring a
+separate simulator installation.
 
-## 📂 Key Files:
+## Requirements
 
-- `my_racer.py` - The main "brain" of the bot. Contains logic for reading sensors, trail braking, acceleration, and shifting.
-- `optimize.py` - The training script. Runs the physics engine in accelerated mode (x128) and uses the Optuna library to search for perfect racing parameters.
-- `startup.py` - Game launcher and manager. Cleans up dangling background processes, automatically navigates game menus, and deploys the bot.
-- `logger.py` - Telemetry system that logs lap results to CSV files.
+- Windows
+- Python 3.10 or newer
+- Python packages from `requirements.txt`
 
-## 🚀 Requirements
-
-- **Python 3.10+** (tested up to 3.14, fully backwards compatible with 3.10/3.11/3.12)
-- **Windows OS** (The bundled TORCS engine is the `wtorcs.exe` binary; PyAutoGUI utilizes WinAPI to simulate keystrokes for menu navigation).
-- Python libraries listed in `requirements.txt`.
-
-### Setup from scratch (e.g., after `git clone` on a new machine)
+## Setup
 
 ```powershell
 git clone <repo-url>
-cd IBM-TORCS-Think2
+cd IBM-Racing-League-PollubThink
 
-# (Optional) Virtual environment setup
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
 pip install -r requirements.txt
 ```
 
-The TORCS engine (`torcs/wtorcs.exe` + tracks + cars, ~520 MB) is committed to the repo,
-so everything is ready after `git clone` — no external TORCS installation is needed.
+The first clone can take a few minutes because the bundled TORCS directory is
+about 520 MB.
 
-> **NOTE — the first `git clone` will take a few minutes** due to the 520 MB TORCS engine.
+## Running A Race
 
-## 🎮 How to run?
-
-### Option 1: Standard race (Testing)
-
-To see the bot in action on the track without modifying parameters, simply use the startup script. It will automatically launch the game and press the appropriate keys in the menu:
-
-```bash
+```powershell
 python startup.py
 ```
 
-### Option 2: Optimization Process (Time hunting)
+`startup.py` closes previous TORCS instances, launches the bundled simulator,
+navigates the game menus, and starts `my_racer.py`.
 
-To put the bot into learning mode, launch the AI module. The bot will run a specified number of trials, autonomously restarting the environment after every error or crash, aiming to shave fractions of a second off the lap time:
+## Optimizing Parameters
+
+For a short smoke run:
 
 ```powershell
-# Full run (Phase 3 from PLAN.md) - 500 trials, ~8-12h, overnight
-$env:SMOKE = "0"
-python optimize.py
-
-# Smoke run (Phase 2) - 20 trials, +/-20% around baseline, ~20-30 min
 $env:SMOKE = "1"
 python optimize.py
 ```
 
-The best obtained genes will be saved to the `params.json` file, after which `my_racer.py` will automatically load them during subsequent runs.
-
-Progress is persisted in `optuna_corkscrew.db` (SQLite) — Ctrl+C is safe, re-running the same command continues from the last completed trial (`load_if_exists=True`).
-
-### Option 3: View statistics of an existing study
+For a full optimization run:
 
 ```powershell
-python inspect_study.py smoke_v1     # after Phase 2
-python inspect_study.py car1ow1_v1   # after Phase 3
+$env:SMOKE = "0"
+python optimize.py
 ```
 
-Shows the number of completed trials, DNF count, top-5 times, and best params.
+Optimization progress is stored in `optuna_corkscrew.db`, so interrupted runs can
+be resumed by running the same command again. The best runtime parameters are
+written to `params.json`; `my_racer.py` loads this file automatically when it is
+present.
 
----
+To inspect an existing Optuna study:
 
-**Note:** The architecture includes environment safeguards that, in the event of an internal game server crash (typical for very fast computations on Windows), will automatically force a restart of the TORCS instance and resume training.
+```powershell
+python inspect_study.py smoke_v1
+python inspect_study.py car1ow1_v1
+```
+
+## Repository Layout
+
+- `my_racer.py` - main driving controller.
+- `startup.py` - TORCS launcher and bot startup script.
+- `optimize.py` - Optuna training and parameter tuning loop.
+- `inspect_study.py` - small utility for reviewing Optuna study results.
+- `logger.py` - CSV lap and telemetry logging helpers.
+- `params/` - baseline, best, and snapshot parameter files.
+- `torcs/` - bundled TORCS simulator files used by the launcher and trainer.
+
+See `params/PARAMS.md` for the parameter reference and tuning notes.

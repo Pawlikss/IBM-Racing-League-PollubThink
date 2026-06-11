@@ -1,220 +1,144 @@
-# Parameters Dictionary for `my_racer.py`
+# Parameter Reference
 
-All configurable parameters of the controller. Defined in the `PARAMS` dict within
-../my_racer.py, and overwritten by `params.json` (root) if it exists.
+This file summarizes the runtime parameters used by `my_racer.py` and the saved
+parameter sets produced during Optuna tuning.
 
-Optuna in ../optimize.py tunes a subset of these parameters depending
-on the MODE (env var) — see comments in optimize.py above the MODE section.
+Default values are defined in the `PARAMS` dictionary in `my_racer.py`. When a
+root-level `params.json` file exists, `my_racer.py` loads it and overrides the
+defaults. `optimize.py` writes `params.json` after successful tuning runs.
 
----
+## Directory Structure
 
-## Directory Structure `params/`
-
-```
+```text
 params/
-├── PARAMS.md           ← TEN PLIK (dictionary)
-├── baseline.json       ← oryginalne defaulty (1:37.47 na Corkscrew)
-├── best/               ← najlepsze wyniki z każdej fazy Optuny
-│   ├── smoke_best.json       (Faza 2, ~1:35)
-│   ├── full_best.json        (Faza 3, ~1:30.86)
-│   ├── extended_best.json    (Faza 5, ~1:29.24)
-│   ├── brakes_best.json      (Faza 6a, ~1:27.34)
-│   ├── brakes_ext_best.json  (Faza 6b-rev, ~1:26.69)
-│   ├── vision_best.json      (Faza 6b-vision, 1:26.05) ← AKTYWNY BASELINE
-│   ├── joint_best.json       (Faza 6c, 1:25.16 @ 128x ale 5/5 DNF @ 1x — overfit artefakt)
-│   └── antislalom_best.json  (Faza 7, 1:29.57 — failure artefakt)
-└── snapshots/          ← kopie params.json sprzed kolejnych faz (rollback tickets)
-    ├── pre_faza6a.json
-    ├── pre_faza6b.json
-    ├── pre_faza6c.json
-    ├── pre_faza6vision.json
-    └── pre_antislalom_run.json
+|-- PARAMS.md
+|-- baseline.json
+|-- best/
+|   |-- smoke_best.json
+|   |-- full_best.json
+|   |-- extended_best.json
+|   |-- brakes_best.json
+|   |-- brakes_ext_best.json
+|   |-- vision_best.json
+|   |-- joint_best.json
+|   |-- antislalom_best.json
+|   |-- abs_best.json
+|   |-- joint_abs.json
+|   `-- joint_abs2.json
+`-- snapshots/
+    |-- pre_phase6a.json
+    |-- pre_phase6b.json
+    |-- pre_phase6c.json
+    |-- pre_phase6vision.json
+    `-- pre_antislalom_run.json
 ```
 
-`params.json` w root to **runtime config** (czytany przez `my_racer.py`). Optuna
-nadpisuje go po każdym best trial. Aby przywrócić baseline:
+- `baseline.json` keeps the original controller baseline.
+- `best/` stores the best parameter sets from completed tuning stages.
+- `snapshots/` stores rollback copies taken before selected tuning stages.
+- `params.json` is not committed; it is the active local runtime config.
+
+To restore the validated vision baseline:
 
 ```powershell
 copy params\best\vision_best.json params.json
 ```
 
----
+## Controller Parameters
 
-## Parametry sterowania (steering)
+| Parameter | Default | Purpose |
+| --- | ---: | --- |
+| `TARGET_STRAIGHT_SPEED` | 290.0 | Target speed on long straights. |
+| `SAFE_SHARP_CORNER_SPEED` | 80.0 | Speed cap for sharp corners. |
+| `MIN_NORMAL_CORNER_SPEED` | 85.0 | Minimum target speed for normal corners. |
+| `STEER_GAIN` | 30.0 | Steering response multiplier for the car angle. |
+| `CENTERING_GAIN` | 0.2 | Strength of the correction based on track position. |
+| `BRAKE_THRESHOLD` | 0.3 | Speed overshoot threshold before braking starts. |
+| `APEX_SHIFT_GAIN` | 0.46 | How strongly the target line shifts toward the apex. |
+| `APEX_SCALE` | 0.4 | Smoothness scale for the apex shift tanh curve. |
+| `BRAKE_DISTANCE_LIN` | 0.35 | Linear speed component in the safe braking distance. |
+| `BRAKE_DISTANCE_QUAD` | 1200.0 | Quadratic speed divisor in the safe braking distance. |
+| `TRAIL_BRAKE_DIVISOR` | 40.0 | Trail-braking forgiveness based on exit vision. |
+| `BRAKE_PRESS_DIVISOR` | 50.0 | Brake-force divisor once the safe distance is exceeded. |
+| `VISION_LONG_STRAIGHT` | 130.0 | Vision threshold for long straight detection. |
+| `VISION_FAST_CORNER` | 90.0 | Vision threshold for fast corner speed. |
+| `SPEED_FAST_CORNER` | 240.0 | Target speed for fast corners. |
+| `VISION_MED_CORNER` | 60.0 | Vision threshold for medium corner speed. |
+| `SPEED_MED_CORNER` | 190.0 | Target speed for medium corners. |
+| `ABS_SLIP_THRESHOLD` | 3.0 | Wheel-slip threshold before ABS releases braking. |
+| `ABS_MODULATION` | 0.4 | Brake release amount during ABS intervention. |
+| `ABS_D_GAIN` | 0.1 | ABS derivative gain based on slip increase rate. |
+| `STEER_D_GAIN` | 0.5 | Steering derivative gain used to reduce oscillation. |
+| `TCS_SLIP_THRESHOLD` | 5.0 | Wheel-slip threshold for traction control. |
 
-### `STEER_GAIN` — czułość lookahead steering
+## Parameter Groups
 
-- **Typ:** float, **Default:** 30.0, **Sweet spot:** ~5.10 (vision_best)
-- **Opis:** Mnożnik dla sygnału lookahead steeringu. Im większy, tym mocniej bot
-  skręca w odpowiedzi na zakrzywienie toru widziane przez vision sensors.
-- **Optuna ranges:** SMOKE [24, 36], FULL/EXTENDED [5, 45]
-- **Insight:** W Fazie 3 trafił floor 15 → rozszerzenie do 5 dało Fazę 5 (1:29.24).
-  Optymalna wartość dużo niższa niż intuicyjna 30.
+### Steering
 
-### `CENTERING_GAIN` — siła powrotu na środek toru
+- `STEER_GAIN` controls the base steering response to the car angle.
+- `CENTERING_GAIN` pulls the car back toward the track center. Lower values allow
+  wider racing lines but increase the risk of leaving the track.
+- `STEER_D_GAIN` dampens steering changes between steps.
+- `APEX_SHIFT_GAIN` moves the target line toward the inside of a corner.
+- `APEX_SCALE` smooths the apex shift. Very low values behave close to a
+  bang-bang controller; larger values reduce oscillation but can slow the car.
 
-- **Typ:** float, **Default:** 0.2, **Sweet spot:** ~0.048 (vision_best)
-- **Opis:** Dodatek do `steer` proporcjonalny do `trackPos` (pozycja na torze).
-  0.0 = brak centrowania, 0.4 = silne ściąganie do osi.
-- **Optuna ranges:** EXTENDED/FULL [0.0, 0.4]
-- **Insight:** Też trafił floor (0.056) w Fazie 3. Bot z minimal centerwoględem
-  jeździ szybciej bo nie walczy z own apex shift.
+### Speed And Vision
 
-### `APEX_SHIFT_GAIN` — agresywność cięcia apex
+- `VISION_LONG_STRAIGHT`, `VISION_FAST_CORNER`, and `VISION_MED_CORNER` classify
+  the visible path ahead.
+- `TARGET_STRAIGHT_SPEED`, `SPEED_FAST_CORNER`, `SPEED_MED_CORNER`,
+  `MIN_NORMAL_CORNER_SPEED`, and `SAFE_SHARP_CORNER_SPEED` define the target
+  speed for each detected track situation.
+- The intended ordering is `VISION_MED_CORNER < VISION_FAST_CORNER <
+  VISION_LONG_STRAIGHT`. Invalid Optuna suggestions are pruned.
 
-- **Typ:** float, **Default:** 0.46, **Sweet spot:** ~0.454 (vision_best)
-- **Opis:** Maksymalne przesunięcie targetu w stronę apex w `calculate_steering`.
-  Wyższe = ostrzejsze cięcie do wewnętrznej krawędzi w zakrętach.
-- **Optuna ranges:** [0.1, 0.8]
+### Braking And Traction
 
-### `APEX_SCALE` — tłumik smooth-tanh apex (Faza 7)
+- `BRAKE_THRESHOLD` decides when the car is too fast for the current target.
+- `BRAKE_DISTANCE_LIN` and `BRAKE_DISTANCE_QUAD` estimate a safe braking
+  distance from current speed.
+- `TRAIL_BRAKE_DIVISOR` keeps braking active deeper into corner entry when the
+  exit is still far away.
+- `BRAKE_PRESS_DIVISOR` controls how aggressively the brake is applied.
+- `ABS_SLIP_THRESHOLD`, `ABS_MODULATION`, and `ABS_D_GAIN` reduce wheel lockup.
+- `TCS_SLIP_THRESHOLD` reduces throttle when wheel slip becomes too high.
 
-- **Typ:** float, **Default:** 0.05, **Sweet spot:** nieznany (Faza 7 fail)
-- **Opis:** Skala dla `tanh(bias / APEX_SCALE)` w smooth apex shift. Małe wartości
-  (~0.05) → ~bang-bang (jak vision_best). Duże (>1.0) → silne tłumienie oscylacji
-  w mid-corner.
-- **Faza 7 wynik:** APEX_SCALE=2.106 wygrał, ale +3.5s/lap kosztu i 3% pass rate.
-  Smooth tanh jako anti-slalom fix nie działa.
+## Optuna Modes
 
----
+`optimize.py` selects a tuning mode from environment variables:
 
-## Parametry prędkości (speed targets)
+| Environment variable | Study name | Notes |
+| --- | --- | --- |
+| `SMOKE=1` | `smoke_v1` | Short sanity run. |
+| default | `car1ow1_v1` | Full search over the initial parameter set. |
+| `EXTENDED=1` | `car1ow1_v2` | Wider limits for saturated parameters. |
+| `BRAKES=1` | `car1ow1_v3_brakes` | Brake-only tuning from the extended baseline. |
+| `BRAKES_EXT=1` | `car1ow1_v3b_brakes_ext` | Wider brake limits. |
+| `VISION=1` | `car1ow1_v4_vision` | Vision and speed threshold tuning. |
+| `JOINT=1` | `car1ow1_v5_joint` | Joint fit around `vision_best.json`. |
+| `ANTISLALOM=1` | `car1ow1_v6_antislalom` | Apex smoothing experiment. |
+| `JOINT64=1` | `car1ow1_v7_joint64` | Joint fit with lower simulator speedup. |
+| `ABS=1` | `car1ow1_v8_abs` | ABS, TCS, and steering derivative tuning. |
+| `JOINT_ABS=1` | `car1ow1_v9_joint_abs` | Joint optimization with ABS-related parameters. |
 
-### `TARGET_STRAIGHT_SPEED` — prędkość docelowa na prostej
+Examples:
 
-- **Typ:** float (km/h), **Default:** 290.0, **Sweet spot:** ~279.7 (vision_best)
-- **Opis:** Top speed gdy `vision > VISION_LONG_STRAIGHT`. Bot trzyma pełen gaz aż
-  do tej prędkości.
-- **Optuna ranges:** EXTENDED/FULL [240, 310]
+```powershell
+$env:SMOKE = "1"
+python optimize.py
 
-### `SPEED_FAST_CORNER` — prędkość w szybkich łukach
+$env:VISION = "1"
+python optimize.py
+```
 
-- **Typ:** float (km/h), **Default:** 240.0, **Sweet spot:** ~269.7 (trafił ceiling)
-- **Opis:** Target speed gdy `vision > VISION_FAST_CORNER` ale `< VISION_LONG_STRAIGHT`.
-- **Optuna ranges:** VISION [200, 270], JOINT [250, 310] (rozszerzony po nasyceniu)
+## Working Notes
 
-### `SPEED_MED_CORNER` — prędkość w średnich zakrętach
-
-- **Typ:** float (km/h), **Default:** 190.0, **Sweet spot:** ~213.7 (vision_best)
-- **Opis:** Target speed gdy `vision > VISION_MED_CORNER` ale `< VISION_FAST_CORNER`.
-- **Optuna ranges:** VISION [150, 230]
-
-### `MIN_NORMAL_CORNER_SPEED` — dolny próg prędkości w zakręcie normalnym
-
-- **Typ:** float (km/h), **Default:** 110.0, **Sweet spot:** ~117.5 (vision_best)
-- **Opis:** Minimalna prędkość w "normal corner" (vision pomiędzy MED a FAST progami).
-  W Fazie 3 trafił ceiling 150 → rozszerzenie do 180.
-- **Optuna ranges:** EXTENDED [90, 180]
-
-### `SAFE_SHARP_CORNER_SPEED` — prędkość w ostrym zakręcie
-
-- **Typ:** float (km/h), **Default:** 60.0, **Sweet spot:** ~83.7 (vision_best)
-- **Opis:** Target speed gdy `vision <= VISION_MED_CORNER` (bot widzi ostry zakręt
-  blisko). Lower = bezpieczniej, ale tracimy czas.
-- **Optuna ranges:** EXTENDED [40, 95]
-
----
-
-## Parametry vision (progi widzenia)
-
-> **Constraint orderingu:** `VISION_MED < VISION_FAST < VISION_LONG`. Optuna używa
-> `optuna.TrialPruned()` żeby wyrzucać niepoprawne kombinacje.
-
-### `VISION_LONG_STRAIGHT` — próg "to jest prosta"
-
-- **Typ:** float (m), **Default:** 130.0, **Sweet spot:** ~127.5 (vision_best)
-- **Opis:** Jeśli `vision > X`, traktujemy odcinek jako prostą i celujemy
-  TARGET_STRAIGHT_SPEED.
-- **Optuna ranges:** [100, 160]
-
-### `VISION_FAST_CORNER` — próg "to jest szybki łuk"
-
-- **Typ:** float (m), **Default:** 90.0, **Sweet spot:** ~103.0 (vision_best)
-- **Opis:** Pomiędzy tym a LONG_STRAIGHT → SPEED_FAST_CORNER.
-- **Optuna ranges:** [70, 110]
-
-### `VISION_MED_CORNER` — próg "to jest średni zakręt"
-
-- **Typ:** float (m), **Default:** 60.0, **Sweet spot:** ~46.2 (trafił floor 45)
-- **Opis:** Pomiędzy tym a FAST_CORNER → SPEED_MED_CORNER. Poniżej tego → ostry
-  zakręt, redukcja do SAFE_SHARP_CORNER_SPEED.
-- **Optuna ranges:** VISION [45, 80], JOINT [25, 60] (rozszerzony floor po nasyceniu)
-
----
-
-## Parametry hamowania (Faza 6a)
-
-### `BRAKE_THRESHOLD` — próg "trzeba hamować"
-
-- **Typ:** float, **Default:** 0.3, **Sweet spot:** ~0.273 (vision_best)
-- **Opis:** Jeśli `current_speed > target_speed * (1 + BRAKE_THRESHOLD)`, włącza
-  hamowanie. Niższe = wcześniejsze hamowanie, wyższe = trail-braking pod sam apex.
-- **Optuna ranges:** EXTENDED [0.1, 0.5]
-
-### `BRAKE_DISTANCE_LIN` — liniowy mnożnik dystansu hamowania
-
-- **Typ:** float, **Default:** 0.35, **Sweet spot:** ~0.224 (vision_best)
-- **Opis:** Część `safe_distance = LIN * speedX + speedX² / QUAD`. Większy LIN =
-  bardziej liniowo skalowane hamowanie z prędkością.
-- **Optuna ranges:** BRAKES_EXT [0.10, 0.30]
-
-### `BRAKE_DISTANCE_QUAD` — kwadratowy dzielnik dystansu hamowania
-
-- **Typ:** float, **Default:** 1200.0, **Sweet spot:** ~1025 (vision_best)
-- **Opis:** Część `safe_distance = LIN * speedX + speedX² / QUAD`. Mniejszy QUAD =
-  drastyczniejsze skalowanie z prędkością².
-- **Optuna ranges:** BRAKES_EXT [500, 1200]
-
-### `TRAIL_BRAKE_DIVISOR` — forgiveness w trail brakingu
-
-- **Typ:** float, **Default:** 40.0, **Sweet spot:** ~49.5 (vision_best)
-- **Opis:** Część `forgiveness = exit_vision / DIV`. Większy DIV = mniej forgiveness,
-  bot puszcza hamulec później (agresywniej trail-braking pod apex).
-- **Optuna ranges:** BRAKES_EXT [25, 60]
-
-### `BRAKE_PRESS_DIVISOR` — siła wciskania hamulca
-
-- **Typ:** float, **Default:** 45.0, **Sweet spot:** ~17.5 (vision_best, trafił floor)
-- **Opis:** Część `brake = (safe-front) / (DIV * forgiveness)`. Mniejszy DIV =
-  silniejsze hamowanie. Trafił dolne granice w Fazach 6a/6b → rozszerzony floor 15.
-- **Optuna ranges:** BRAKES_EXT [15, 45]
-- **Insight:** 3 z 4 brake-params trafiły floor → bot chce hamować mocniej i
-  agresywniej niż defaulty zakładały.
-
----
-
-## Tabela: gdzie zostaje co
-
-| Parameter               | Gdzie używane w `my_racer.py`        | Faza tuningu  |
-| ----------------------- | ------------------------------------ | ------------- |
-| TARGET_STRAIGHT_SPEED   | `calculate_throttle` (top speed)     | 3, 5, 6c      |
-| SAFE_SHARP_CORNER_SPEED | `calculate_throttle` (sharp corner)  | 3, 5, 6c      |
-| MIN_NORMAL_CORNER_SPEED | `calculate_throttle` (normal corner) | 3, 5, 6c      |
-| STEER_GAIN              | `calculate_steering` (lookahead)     | 3, 5, 6c      |
-| CENTERING_GAIN          | `calculate_steering` (trackPos)      | 3, 5, 6c      |
-| BRAKE_THRESHOLD         | `apply_brakes` (kiedy hamować)       | 3, 5, 6c      |
-| APEX_SHIFT_GAIN         | `calculate_steering` (apex bias)     | 3, 5, 6c, 7   |
-| APEX_SCALE              | `calculate_steering` (smooth tanh)   | 7 (failed)    |
-| BRAKE_DISTANCE_LIN      | `apply_brakes` (safe_distance)       | 6a, 6b, 6c    |
-| BRAKE_DISTANCE_QUAD     | `apply_brakes` (safe_distance)       | 6a, 6b, 6c    |
-| TRAIL_BRAKE_DIVISOR     | `apply_brakes` (forgiveness)         | 6a, 6b, 6c    |
-| BRAKE_PRESS_DIVISOR     | `apply_brakes` (brake force)         | 6a, 6b, 6c    |
-| VISION_LONG_STRAIGHT    | `calculate_throttle` (próg prosta)   | 6b-vision, 6c |
-| VISION_FAST_CORNER      | `calculate_throttle` (próg fast)     | 6b-vision, 6c |
-| VISION_MED_CORNER       | `calculate_throttle` (próg med)      | 6b-vision, 6c |
-| SPEED_FAST_CORNER       | `calculate_throttle` (cel fast)      | 6b-vision, 6c |
-| SPEED_MED_CORNER        | `calculate_throttle` (cel med)       | 6b-vision, 6c |
-
----
-
-## Konwencje pracy
-
-1. **NIE NADPISYWAĆ** `params/best/vision_best.json` — to nasz złoty 1:26 baseline.
-2. **Snapshot przed każdą nową fazą Optuny:** `copy params.json params\snapshots\pre_fazaXX.json`.
-3. **Po Optunie:** najlepszy wynik kopiuj do `params/best/<faza>_best.json`, runtime
-   `params.json` zostaje aktywny.
-4. **Walidacja po każdej fazie:** `python startup.py` (5x1x). Tylko walidowane
-   wyniki uznajemy za "działa".
-5. **Failed experiments (overfit/regresja):** zachowujemy w `params/best/` z
-   adnotacją w PLAN.md, że to artefakt — nie usuwamy, są wartościowe jako
-   kontrprzykłady.
+- Treat `params/best/vision_best.json` as the validated baseline.
+- Before a new long tuning phase, copy the active `params.json` into
+  `params/snapshots/`.
+- After tuning, keep the best result in `params/best/<mode>_best.json`.
+- Validate important tuning results with `python startup.py` at normal simulator
+  speed, because very high simulation speed can overfit to physics timing.
+- Failed experiments are kept when they explain a useful tuning boundary or
+  regression.

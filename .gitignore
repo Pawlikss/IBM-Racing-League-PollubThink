@@ -1,8 +1,8 @@
-# Cache Pythona
+# Python cache
 __pycache__/
 *.py[cod]
 
-# Pliki tworzone w locie podczas uruchomienia bota
+# Runtime files created by the bot and Optuna
 *.csv
 last_lap.json
 params.json
@@ -13,7 +13,9 @@ optuna_*.db
 .idea/
 .vscode/
 .venv/
-# TORCS runtime artefakty (silnik gry trzymamy w repo, ale pomijamy generowane pliki)
+
+# TORCS runtime artifacts. The bundled game engine stays in the repo,
+# but generated local outputs should not be committed.
 torcs/results/
 torcs/config/screen.xml
 torcs/*.log
